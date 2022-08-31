@@ -15,3 +15,6 @@ test:
 .PHONY: bandit
 bandit:
 	pipenv run bandit -r flask_boto3/
+
+build:
+	pipenv run python setup.py build

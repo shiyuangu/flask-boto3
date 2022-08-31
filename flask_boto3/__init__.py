@@ -9,7 +9,24 @@ class Boto3(object):
     for easier handling inside view functions.
 
     All connectors are stored inside the dict `boto3_cns` where the keys are
-    the name of the services and the values their associated boto3 client.
+    the name of the services and the values their associated boto3 resource/client.
+
+    Cf: https://github.com/shiyuangu/flask-boto3
+    Usage example: 
+
+    from flask import Flask
+    from flask_boto3 import Boto3
+    app = Flask(__name__)
+    app.config['BOTO3_SERVICES'] = ['s3']
+    boto_flask = Boto3(app)
+    
+   T hen boto3's clients and resources will be available as properties within the application context:    
+    >>> with app.app_context():
+        print(boto_flask.clients)
+        print(boto_flask.resources)
+    {'s3': <botocore.client.S3 object at 0x..>}
+    {'s3': s3.ServiceResource()}
+    
     """
 
     def __init__(self, app=None):
@@ -28,14 +45,20 @@ class Boto3(object):
             svc.lower() for svc in current_app.config.get('BOTO3_SERVICES', [])
         )
 
-        region = current_app.config.get('BOTO3_REGION')
+        region = current_app.config.get('BOTO3_REGION',"us-west-1") # N. California
         sess_params = {
+
+            # BOTO3_XXX is for flask-boto3; if None, rely on default lookup 
             'aws_access_key_id': current_app.config.get('BOTO3_ACCESS_KEY'),
             'aws_secret_access_key': current_app.config.get('BOTO3_SECRET_KEY'),
-            'profile_name': current_app.config.get('BOTO3_PROFILE'),
+
+            # To use the default profile, don’t set the profile_name parameter at all.
+            # Cf: https://boto3.amazonaws.com/v1/documentation/api/latest/guide/session.html#session-configurations
+            # Cf: https://boto3.amazonaws.com/v1/documentation/api/latest/guide/configuration.html
+            'profile_name': current_app.config.get('BOTO3_PROFILE'), 
             'region_name': region
         }
-        sess = boto3.session.Session(**sess_params)
+        sess = boto3.session.Session(**sess_params) # pyright: ignore
 
         try:
             cns = {}
@@ -60,6 +83,7 @@ class Boto3(object):
                     args = [args]
 
                 # Create resource or client
+                # use resource API if available otherwise use low level client api
                 if svc in sess.get_available_resources():
                     cns.update({svc: sess.resource(svc, *args, **kwargs)})
                 else:
@@ -68,7 +92,7 @@ class Boto3(object):
             raise
         return cns
 
-    def teardown(self, exception):
+    def teardown(self, exception): 
         ctx = stack.top
         if hasattr(ctx, 'boto3_cns'):
             for c in ctx.boto3_cns:
@@ -79,7 +103,9 @@ class Boto3(object):
     @property
     def resources(self):
         c = self.connections
-        return {k: v for k, v in c.items() if hasattr(c[k].meta, 'client')}
+
+        # the existence of svc.meta.client indicates the service has resouce. 
+        return {k: v for k, v in c.items() if hasattr(c[k].meta, 'client')}  # pyright: ignore
 
     @property
     def clients(self):
@@ -87,7 +113,7 @@ class Boto3(object):
         Get all clients (with and without associated resources)
         """
         clients = {}
-        for k, v in self.connections.items():
+        for k, v in self.connections.items():  # pyright: ignore
             if hasattr(v.meta, 'client'):       # has boto3 resource
                 clients[k] = v.meta.client
             else:                               # no boto3 resource
